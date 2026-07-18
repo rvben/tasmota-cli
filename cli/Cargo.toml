@@ -10,7 +10,7 @@ repository.workspace = true
 homepage.workspace = true
 keywords = ["tasmota", "smart-home", "iot", "cli", "home-automation"]
 categories = ["command-line-utilities"]
-readme = "README.md"
+readme = "../README.md"
 default-run = "tasmota"
 
 [lib]
