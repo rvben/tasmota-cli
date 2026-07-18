@@ -166,7 +166,7 @@ jobs:
           VERSION_NUM="${VERSION#v}"
 
           cat > /tmp/tasmota.rb << 'FORMULA'
-          class Tasmota < Formula
+          class TasmotaCli < Formula
             desc "Unofficial CLI for managing Tasmota smart devices over HTTP"
             homepage "https://github.com/rvben/tasmota-cli"
             version "VERSION_NUM"
@@ -216,10 +216,10 @@ jobs:
 
           git clone git@github.com:rvben/homebrew-tap.git /tmp/tap
           mkdir -p /tmp/tap/Formula
-          cp /tmp/tasmota.rb /tmp/tap/Formula/tasmota.rb
+          cp /tmp/tasmota.rb /tmp/tap/Formula/tasmota-cli.rb
           cd /tmp/tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/tasmota.rb
+          git add Formula/tasmota-cli.rb
           git diff --cached --quiet || git commit -m "Update tasmota to ${VERSION}"
           git push
