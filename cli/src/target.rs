@@ -36,7 +36,12 @@ struct GroupsFile {
 fn load_groups(path: &Path) -> Result<GroupsFile> {
     match std::fs::read_to_string(path) {
         Ok(s) => toml::from_str(&s).map_err(|e| Error::Io {
-            message: format!("parsing {}: {e}", path.display()),
+            message: format!(
+                "parsing {}: {e}\nexpected a [groups] table mapping each name to a list \
+                 of device names or IPs, e.g.:\n\n[groups]\nkitchen = [\"Freezer\", \
+                 \"Dishwasher\", \"10.10.20.5\"]",
+                path.display()
+            ),
         }),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(GroupsFile::default()),
         Err(e) => Err(Error::Io {
@@ -183,6 +188,21 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.kind(), "usage");
+    }
+
+    #[test]
+    fn groups_parse_error_includes_an_example() {
+        let dir = std::env::temp_dir().join("tasmota-cli-groups-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bad-groups.toml");
+        // Wrong shape: array-of-tables instead of a [groups] map.
+        std::fs::write(&path, "[[groups]]\nname = \"x\"\n").unwrap();
+        let err = list_groups(&path).unwrap_err();
+        assert_eq!(err.kind(), "io");
+        assert!(
+            err.to_string().contains("[groups]") && err.to_string().contains("kitchen ="),
+            "error should show the expected format: {err}"
+        );
     }
 
     #[test]

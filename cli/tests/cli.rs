@@ -152,6 +152,27 @@ fn no_target_exits_usage() {
 }
 
 #[test]
+fn clap_arg_error_is_a_clean_single_line() {
+    // A clap validation error must not dump the multi-line "For more information,
+    // try --help" footer into the structured envelope.
+    let out = run(&["--timeout", "abc", "status"]);
+    assert_eq!(out.code, 3, "stderr: {}", out.stderr);
+    let msg = error_envelope(&out.stderr)["message"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(!msg.contains('\n'), "message had embedded newline: {msg:?}");
+    assert!(
+        !msg.contains("For more information"),
+        "message kept clap footer: {msg:?}"
+    );
+    assert!(
+        msg.contains("--timeout"),
+        "message lost the core error: {msg:?}"
+    );
+}
+
+#[test]
 fn command_rejected_maps_to_exit_7() {
     let server = MockServer::start();
     server.mock(|when, then| {

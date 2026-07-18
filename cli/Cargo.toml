@@ -30,6 +30,9 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 toml = "0.8"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 jsonschema = { version = "0.46", default-features = false }
 httpmock = "0.7"

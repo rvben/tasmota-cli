@@ -86,13 +86,6 @@ fn gate(
     Ok(Gate::Proceed)
 }
 
-fn indent(s: &str) -> String {
-    s.lines()
-        .map(|l| format!("  {l}"))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// Turn per-device outcomes into a final [`Output`]. A single target surfaces its
 /// error via `Err` (so the CLI emits an error envelope); multiple targets report
 /// each outcome and set the exit code to the most severe failure.
@@ -130,11 +123,13 @@ fn finish(ctx: &Ctx, mut results: Vec<PerDevice>) -> Result<Output> {
             serde_json::to_string_pretty(&arr).expect("json")
         }
         OutputFormat::Text => {
+            // Per-device render already begins with the device name, so there is no
+            // separate label header (which would repeat the name).
             let mut blocks = Vec::new();
             for r in &results {
                 match &r.error {
                     Some(e) => blocks.push(format!("{}: error: {e}", r.label)),
-                    None => blocks.push(format!("{}:\n{}", r.label, indent(&r.text))),
+                    None => blocks.push(r.text.clone()),
                 }
             }
             blocks.join("\n\n")
@@ -320,6 +315,11 @@ pub fn discover(ctx: &Ctx, range: Option<String>, concurrency: usize) -> Result<
                 .collect();
             serde_json::to_string_pretty(&arr).expect("json")
         }
+        OutputFormat::Text if found.is_empty() => format!(
+            "no Tasmota devices found in {cidr}\n\
+             (if your devices are on another subnet, pass --range <CIDR>, \
+             e.g. --range 10.0.0.0/24)"
+        ),
         OutputFormat::Text => render::discovered(&found),
     }))
 }
@@ -702,12 +702,34 @@ pub fn watch(ctx: &Ctx, sel: &Selector, interval: u64) -> Result<Output> {
     }
     let t = ctx.transport();
     loop {
-        // Clear screen and move cursor home.
-        print!("\x1b[2J\x1b[H");
-        for r in &targets {
-            match ops::get_status(&t, &r.addr) {
-                Ok(s) => println!("{}\n", render::status(&s)),
-                Err(e) => println!("{}: error: {e}\n", r.label),
+        match ctx.format {
+            // Text: a live, screen-clearing dashboard.
+            OutputFormat::Text => {
+                print!("\x1b[2J\x1b[H");
+                for r in &targets {
+                    match ops::get_status(&t, &r.addr) {
+                        Ok(s) => println!("{}\n", render::status(&s)),
+                        Err(e) => println!("{}: error: {e}\n", r.label),
+                    }
+                }
+            }
+            // JSON: one newline-delimited JSON array snapshot per interval, so
+            // `-o json` stays scriptable rather than emitting the ANSI dashboard.
+            OutputFormat::Json => {
+                let snapshot: Vec<Value> = targets
+                    .iter()
+                    .map(|r| match ops::get_status(&t, &r.addr) {
+                        Ok(s) => json!({
+                            "name": r.label, "host": r.addr.host,
+                            "result": to_value(&s)
+                        }),
+                        Err(e) => json!({
+                            "name": r.label, "host": r.addr.host,
+                            "error": {"kind": e.kind(), "message": e.to_string()}
+                        }),
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string(&snapshot).expect("json"));
             }
         }
         let _ = std::io::stdout().flush();

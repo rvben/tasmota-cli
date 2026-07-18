@@ -48,7 +48,8 @@ struct GlobalArgs {
     #[arg(long, short = 'n', global = true)]
     name: Option<String>,
 
-    /// Target a named group from groups.toml.
+    /// Target a named group from groups.toml. Format: a [groups] table mapping each
+    /// name to a list, e.g. `kitchen = ["Freezer", "Dishwasher", "10.10.20.5"]`.
     #[arg(long, short = 'g', global = true)]
     group: Option<String>,
 
@@ -253,6 +254,13 @@ fn build_ctx(g: &GlobalArgs) -> Ctx {
 }
 
 fn main() -> ExitCode {
+    // Restore default SIGPIPE handling so piping into `head`/`less` exits quietly
+    // instead of panicking on a broken pipe (Rust ignores SIGPIPE by default).
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(e) => return handle_clap_error(e),
@@ -366,12 +374,25 @@ fn handle_clap_error(e: clap::Error) -> ExitCode {
         }
         _ => {
             let err = Error::Usage {
-                message: e.to_string().trim().to_string(),
+                message: clean_clap_message(&e),
             };
             emit_error(&err);
             ExitCode::from(err.exit_code() as u8)
         }
     }
+}
+
+/// Reduce a clap error to its core first line, dropping the multi-line
+/// `Usage:` / `For more information, try '--help'.` footer and the `error:`
+/// prefix, so it reads cleanly inside the structured envelope.
+fn clean_clap_message(e: &clap::Error) -> String {
+    let full = e.to_string();
+    let first = full
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .trim();
+    first.strip_prefix("error: ").unwrap_or(first).to_string()
 }
 
 /// Write the clispec error envelope as the last line of stderr.

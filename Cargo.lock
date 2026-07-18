@@ -1814,6 +1814,7 @@ dependencies = [
  "clap_complete",
  "httpmock",
  "jsonschema",
+ "libc",
  "serde",
  "serde_json",
  "tasmota-core",

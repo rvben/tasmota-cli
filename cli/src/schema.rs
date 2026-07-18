@@ -50,14 +50,27 @@ pub fn contract() -> Value {
                 {"name": "firmware", "type": "string"}
              ]},
             {"name": "devices", "mutating": false, "stability": "stable",
-             "description": "List cached devices."},
+             "description": "List cached devices.",
+             "output_fields": [
+                {"name": "name", "type": "string"},
+                {"name": "host", "type": "string"},
+                {"name": "module", "type": "integer", "description": "Tasmota module code; may be absent."},
+                {"name": "mac", "type": "string", "description": "May be absent."}
+             ]},
             {"name": "status", "mutating": false, "stability": "stable",
              "description": "Show full device status. Targets the device selected by the global --host/--name/--group/--all options.",
              "output_fields": [
-                {"name": "name", "type": "string"},
-                {"name": "relays", "type": "object[]"},
+                {"name": "host", "type": "string"},
+                {"name": "name", "type": "string", "description": "DeviceName; null if unset."},
+                {"name": "friendly_names", "type": "string[]"},
+                {"name": "module", "type": "integer", "description": "Tasmota module code; null if unknown."},
+                {"name": "relays", "type": "object[]", "description": "Each: {index, state (on/off/unknown), raw}."},
                 {"name": "firmware", "type": "string"},
-                {"name": "energy", "type": "object", "description": "null when the device has no energy sensor."}
+                {"name": "net", "type": "object", "description": "{ip, mac, hostname}; fields null if absent."},
+                {"name": "uptime", "type": "string"},
+                {"name": "wifi_rssi", "type": "integer", "description": "Tasmota link quality 0-100; null if absent."},
+                {"name": "energy", "type": "object", "description": "null when the device has no energy sensor."},
+                {"name": "mqtt", "type": "object", "description": "{host, port, client, reconnect_count, connected}; connected is always null over HTTP."}
              ]},
             {"name": "on", "mutating": true, "stability": "stable",
              "description": "Turn a relay on. Targets the device selected by the global --host/--name/--group/--all options.",
@@ -78,9 +91,19 @@ pub fn contract() -> Value {
              "description": "Show instantaneous power (W). Targets the device selected by the global --host/--name/--group/--all options.",
              "output_fields": [{"name": "power_w", "type": "number", "description": "null when the device has no energy sensor."}]},
             {"name": "energy", "mutating": false, "stability": "stable",
-             "description": "Show energy totals (kWh). Targets the device selected by the global --host/--name/--group/--all options."},
+             "description": "Show energy totals (kWh). Targets the device selected by the global --host/--name/--group/--all options.",
+             "output_fields": [
+                {"name": "energy", "type": "object", "description": "{power_w, voltage_v, current_a, today_kwh, yesterday_kwh, total_kwh}; null (no sensor) or per-field null when absent, never coerced to 0."}
+             ]},
             {"name": "health", "mutating": false, "stability": "stable",
-             "description": "Show device health (online, RSSI, uptime, firmware, MQTT). Targets the device selected by the global --host/--name/--group/--all options."},
+             "description": "Show device health (online, RSSI, uptime, firmware, MQTT). Targets the device selected by the global --host/--name/--group/--all options.",
+             "output_fields": [
+                {"name": "online", "type": "boolean"},
+                {"name": "rssi", "type": "integer", "description": "Tasmota link quality 0-100; null if absent."},
+                {"name": "uptime", "type": "string"},
+                {"name": "firmware", "type": "string"},
+                {"name": "mqtt", "type": "object", "description": "{host, port, client, reconnect_count, connected}; connected is always null over HTTP."}
+             ]},
             {"name": "config", "mutating": false, "stability": "stable",
              "description": "Read or write device settings.",
              "subcommands": [
