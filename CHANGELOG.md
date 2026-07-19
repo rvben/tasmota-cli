@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.1.3](https://github.com/rvben/tasmota-cli/compare/v0.1.2...v0.1.3) - 2026-07-19
+
+### Added
+
+- **core**: implement switchkit::SmartDevice for Tasmota ([944c48b](https://github.com/rvben/tasmota-cli/commit/944c48b0abbb34acacbc49f1f0412dae967ab928))
+
 ## [0.1.2](https://github.com/rvben/tasmota-cli/compare/v0.1.1...v0.1.2) - 2026-07-19
 
 ### Fixed
