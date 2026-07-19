@@ -1808,7 +1808,7 @@ dependencies = [
 
 [[package]]
 name = "tasmota-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "clap",
  "clap_complete",
@@ -1824,7 +1824,7 @@ dependencies = [
 
 [[package]]
 name = "tasmota-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "httpmock",
  "serde",

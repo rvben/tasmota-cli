@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
+
+## [0.1.2](https://github.com/rvben/tasmota-cli/compare/v0.1.1...v0.1.2) - 2026-07-19
+
+### Fixed
+
+- **core**: anchor credential redaction to query-param boundaries ([6712194](https://github.com/rvben/tasmota-cli/commit/671219487d266887b65e5b5729238856bf0e75e8))
+- **core**: redact device credentials from transport errors; bound connect timeout ([1b717d5](https://github.com/rvben/tasmota-cli/commit/1b717d5134613c4a14be32a94116ce8db9d0e0d8))
+
 ## [0.1.1](https://github.com/rvben/tasmota-cli/compare/v0.1.0...v0.1.1) - 2026-07-18
 
 ### Fixed
