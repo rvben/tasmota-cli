@@ -2,3 +2,9 @@
 /dist
 .DS_Store
 *.swp
+
+# Internal design docs and agent memory: never committed or published
+/docs/superpowers/
+/.superpowers/
+/CLAUDE.md
+/CLAUDE.local.md
