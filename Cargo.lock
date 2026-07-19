@@ -1774,6 +1774,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
+name = "switchkit"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6e8f0f55247a6c3759bb08bff4f16fbd8876df26d9f474b7965ba832f9c3604"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1829,6 +1840,7 @@ dependencies = [
  "httpmock",
  "serde",
  "serde_json",
+ "switchkit",
  "thiserror 2.0.18",
  "ureq",
 ]

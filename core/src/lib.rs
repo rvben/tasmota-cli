@@ -18,8 +18,10 @@ pub mod guardrail;
 pub mod model;
 pub mod ops;
 pub mod parse;
+pub mod switchkit_impl;
 pub mod transport;
 
 pub use error::{Error, Result};
 pub use model::{DeviceStatus, Energy, MqttInfo, NetInfo, Relay, RelayState};
+pub use parse::looks_like_tasmota;
 pub use transport::{Credentials, DeviceAddr, HttpTransport, Transport};
