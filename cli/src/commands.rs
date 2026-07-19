@@ -747,7 +747,7 @@ pub async fn watch(ctx: &Ctx, sel: &Selector, interval: u64) -> Result<Output> {
             }
         }
         let _ = std::io::stdout().flush();
-        std::thread::sleep(std::time::Duration::from_secs(interval.max(1)));
+        tokio::time::sleep(std::time::Duration::from_secs(interval.max(1))).await;
     }
 }
 
