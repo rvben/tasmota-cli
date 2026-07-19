@@ -22,7 +22,7 @@ name = "tasmota"
 path = "src/main.rs"
 
 [dependencies]
-tasmota-core = { path = "../core", version = "0.1.0" }
+tasmota-core = { path = "../core", version = "0.2.0" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

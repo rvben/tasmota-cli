@@ -7,6 +7,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 
 
+
+## [0.2.0](https://github.com/rvben/tasmota-cli/compare/v0.1.3...v0.2.0) - 2026-07-19
+
+### Breaking Changes
+
+- **cli**: async tokio runtime over the async core ([78b017a](https://github.com/rvben/tasmota-cli/commit/78b017a41f349469f71601d1e43483af5a5ecbe2))
+- **core**: async reqwest transport, ops, and switchkit adapter ([50a52f7](https://github.com/rvben/tasmota-cli/commit/50a52f798c8cd1f8c617b617e3e8402efc19bcfa))
+
+### Added
+
+- **cli**: async tokio runtime over the async core ([78b017a](https://github.com/rvben/tasmota-cli/commit/78b017a41f349469f71601d1e43483af5a5ecbe2))
+- **core**: async reqwest transport, ops, and switchkit adapter ([50a52f7](https://github.com/rvben/tasmota-cli/commit/50a52f798c8cd1f8c617b617e3e8402efc19bcfa))
+
 ## [0.1.3](https://github.com/rvben/tasmota-cli/compare/v0.1.2...v0.1.3) - 2026-07-19
 
 ### Added
