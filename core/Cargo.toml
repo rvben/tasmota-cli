@@ -20,8 +20,11 @@ path = "src/lib.rs"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-ureq.workspace = true
-switchkit = "0.1"
+async-trait = "0.1"
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+switchkit = "0.2"
 
 [dev-dependencies]
 httpmock = "0.7"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }

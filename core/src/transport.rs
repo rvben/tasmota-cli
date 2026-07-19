@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::error::{Error, Result};
@@ -41,18 +42,19 @@ impl DeviceAddr {
 
 /// The device interaction surface. Trait-based so the CLI and tests can inject a
 /// fake without touching the network.
+#[async_trait]
 pub trait Transport {
     /// Send a Tasmota command (e.g. `Status 0`, `Power TOGGLE`) and return the
     /// parsed JSON body, having verified the device did not reject it.
-    fn command(&self, addr: &DeviceAddr, cmnd: &str) -> Result<Value>;
+    async fn command(&self, addr: &DeviceAddr, cmnd: &str) -> Result<Value>;
 
     /// Download raw bytes from a device path (e.g. `/dl` config backup).
-    fn download(&self, addr: &DeviceAddr, path: &str) -> Result<Vec<u8>>;
+    async fn download(&self, addr: &DeviceAddr, path: &str) -> Result<Vec<u8>>;
 
     /// Upload bytes as `multipart/form-data` to a device path (e.g. config
     /// restore). Returns the response body as a string value, since the device
     /// upload handler answers with HTML, not JSON.
-    fn upload(
+    async fn upload(
         &self,
         addr: &DeviceAddr,
         path: &str,
@@ -129,8 +131,9 @@ fn command_url(addr: &DeviceAddr, cmnd: &str) -> String {
     url
 }
 
-/// Redact credential values embedded in a string (typically a ureq transport-error
-/// message, which quotes the full request URL including `&user=...&password=...`).
+/// Redact credential values embedded in a string (typically a reqwest transport-
+/// error message, which quotes the full request URL including
+/// `&user=...&password=...`).
 ///
 /// Replaces the value following a case-insensitive `user=` or `password=` with
 /// `***`, stopping at the next `&`, whitespace, or `:` delimiter, or end of string.
@@ -176,26 +179,33 @@ fn redact_credentials(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// A real HTTP transport backed by `ureq`.
+/// Scrub a `reqwest::Error`'s `Display` before it becomes a `Network` error
+/// message. A `reqwest::Error` from `send().await`, `text().await`,
+/// `bytes().await`, or the upload response read can ALL carry the full request
+/// URL (including `?user=...&password=...`) in its `Display` - not just a
+/// connect-time error. Every `reqwest::Error` boundary in this module routes
+/// through this one helper; never build a `Network` message from a raw
+/// `reqwest::Error` string.
+fn network_reqwest_error(host: &str, e: reqwest::Error) -> Error {
+    Error::Network {
+        message: format!("{host}: {}", redact_credentials(&e.to_string())),
+    }
+}
+
+/// A real HTTP transport backed by `reqwest`.
 #[derive(Debug, Clone)]
 pub struct HttpTransport {
-    timeout: Duration,
+    client: reqwest::Client,
 }
 
 impl HttpTransport {
     pub fn new(timeout: Duration) -> Self {
-        HttpTransport { timeout }
-    }
-
-    /// Build a `ureq` agent with both the overall/read timeout and a short,
-    /// separately-bounded TCP connect timeout. `AgentBuilder::timeout` does not
-    /// bound the connect phase in ureq 2.x (its own default is ~30s), so scanning
-    /// unreachable hosts would otherwise hang ~30s per host.
-    fn build_agent(&self) -> ureq::Agent {
-        ureq::AgentBuilder::new()
-            .timeout(self.timeout)
-            .timeout_connect(Duration::from_secs(2))
+        let client = reqwest::Client::builder()
+            .timeout(timeout)
+            .connect_timeout(Duration::from_secs(2))
             .build()
+            .expect("build reqwest client");
+        HttpTransport { client }
     }
 }
 
@@ -205,30 +215,30 @@ impl Default for HttpTransport {
     }
 }
 
+#[async_trait]
 impl Transport for HttpTransport {
-    fn command(&self, addr: &DeviceAddr, cmnd: &str) -> Result<Value> {
+    async fn command(&self, addr: &DeviceAddr, cmnd: &str) -> Result<Value> {
         let url = command_url(addr, cmnd);
-        let agent = self.build_agent();
-        let body = match agent.get(&url).call() {
-            Ok(resp) => resp.into_string().map_err(|e| Error::Network {
-                message: format!("reading response from {}: {e}", addr.host),
-            })?,
-            Err(ureq::Error::Status(401, _)) => {
-                return Err(Error::Auth {
-                    message: format!("{} returned HTTP 401 (WebPassword set?)", addr.host),
-                });
-            }
-            Err(ureq::Error::Status(code, _)) => {
-                return Err(Error::Network {
-                    message: format!("{} returned HTTP {code}", addr.host),
-                });
-            }
-            Err(ureq::Error::Transport(t)) => {
-                return Err(Error::Network {
-                    message: format!("{}: {}", addr.host, redact_credentials(&t.to_string())),
-                });
-            }
-        };
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| network_reqwest_error(&addr.host, e))?;
+        if resp.status().as_u16() == 401 {
+            return Err(Error::Auth {
+                message: format!("{} returned HTTP 401 (WebPassword set?)", addr.host),
+            });
+        }
+        if !resp.status().is_success() {
+            return Err(Error::Network {
+                message: format!("{} returned HTTP {}", addr.host, resp.status().as_u16()),
+            });
+        }
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| network_reqwest_error(&addr.host, e))?;
         let value: Value = serde_json::from_str(&body).map_err(|_| Error::Parse {
             message: format!(
                 "{} did not return JSON (not a Tasmota /cm endpoint?)",
@@ -239,7 +249,7 @@ impl Transport for HttpTransport {
         Ok(value)
     }
 
-    fn download(&self, addr: &DeviceAddr, path: &str) -> Result<Vec<u8>> {
+    async fn download(&self, addr: &DeviceAddr, path: &str) -> Result<Vec<u8>> {
         let mut url = format!("http://{}{}", addr.host, path);
         if let Some(c) = &addr.credentials {
             // The web UI download uses form login; passing credentials in the query
@@ -250,30 +260,34 @@ impl Transport for HttpTransport {
                 encode_component(&c.password)
             ));
         }
-        let agent = self.build_agent();
-        match agent.get(&url).call() {
-            Ok(resp) => {
-                let mut buf = Vec::new();
-                resp.into_reader()
-                    .read_to_end(&mut buf)
-                    .map_err(|e| Error::Network {
-                        message: format!("reading {} from {}: {e}", path, addr.host),
-                    })?;
-                Ok(buf)
-            }
-            Err(ureq::Error::Status(401, _)) => Err(Error::Auth {
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| network_reqwest_error(&addr.host, e))?;
+        if resp.status().as_u16() == 401 {
+            return Err(Error::Auth {
                 message: format!("{} returned HTTP 401 downloading {path}", addr.host),
-            }),
-            Err(ureq::Error::Status(code, _)) => Err(Error::Network {
-                message: format!("{} returned HTTP {code} downloading {path}", addr.host),
-            }),
-            Err(ureq::Error::Transport(t)) => Err(Error::Network {
-                message: format!("{}: {}", addr.host, redact_credentials(&t.to_string())),
-            }),
+            });
         }
+        if !resp.status().is_success() {
+            return Err(Error::Network {
+                message: format!(
+                    "{} returned HTTP {} downloading {path}",
+                    addr.host,
+                    resp.status().as_u16()
+                ),
+            });
+        }
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| network_reqwest_error(&addr.host, e))?;
+        Ok(bytes.to_vec())
     }
 
-    fn upload(
+    async fn upload(
         &self,
         addr: &DeviceAddr,
         path: &str,
@@ -300,33 +314,38 @@ impl Transport for HttpTransport {
                 encode_component(&c.password)
             ));
         }
-        let agent = self.build_agent();
-        match agent
+        let resp = self
+            .client
             .post(&url)
-            .set(
+            .header(
                 "Content-Type",
-                &format!("multipart/form-data; boundary={boundary}"),
+                format!("multipart/form-data; boundary={boundary}"),
             )
-            .send_bytes(&body)
-        {
-            Ok(resp) => {
-                let text = resp.into_string().unwrap_or_default();
-                Ok(Value::String(text))
-            }
-            Err(ureq::Error::Status(401, _)) => Err(Error::Auth {
+            .body(body)
+            .send()
+            .await
+            .map_err(|e| network_reqwest_error(&addr.host, e))?;
+        if resp.status().as_u16() == 401 {
+            return Err(Error::Auth {
                 message: format!("{} returned HTTP 401 uploading to {path}", addr.host),
-            }),
-            Err(ureq::Error::Status(code, _)) => Err(Error::Network {
-                message: format!("{} returned HTTP {code} uploading to {path}", addr.host),
-            }),
-            Err(ureq::Error::Transport(t)) => Err(Error::Network {
-                message: format!("{}: {}", addr.host, redact_credentials(&t.to_string())),
-            }),
+            });
         }
+        if !resp.status().is_success() {
+            return Err(Error::Network {
+                message: format!(
+                    "{} returned HTTP {} uploading to {path}",
+                    addr.host,
+                    resp.status().as_u16()
+                ),
+            });
+        }
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| network_reqwest_error(&addr.host, e))?;
+        Ok(Value::String(text))
     }
 }
-
-use std::io::Read;
 
 #[cfg(test)]
 mod tests {
@@ -447,9 +466,10 @@ mod tests {
     /// with real credentials and assert the resulting error never contains the
     /// password. 127.0.0.1 loopback is the test harness (not a real/LAN device);
     /// port 1 is unlisted so the OS returns a fast, deterministic connection
-    /// refusal instead of a slow timeout.
-    #[test]
-    fn transport_error_does_not_leak_password_e2e() {
+    /// refusal instead of a slow timeout. Proves reqwest's error path (not just
+    /// the ureq path this test predates) is scrubbed.
+    #[tokio::test]
+    async fn transport_error_does_not_leak_password_e2e() {
         let addr = DeviceAddr::new("127.0.0.1:1").with_credentials(Some(Credentials {
             user: "admin".into(),
             password: "SUPER_SECRET_PW".into(),
@@ -457,6 +477,7 @@ mod tests {
         let transport = HttpTransport::default();
         let err = transport
             .command(&addr, "Status 0")
+            .await
             .expect_err("connecting to a closed port must fail");
         let message = err.to_string();
         assert!(

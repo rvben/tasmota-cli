@@ -31,7 +31,7 @@ impl PowerAction {
 
 /// Parse an already-fetched `Status 0` value, resolving custom `StateText` labels
 /// only when a relay string did not map with the defaults.
-pub fn status_from_value<T: Transport>(
+pub async fn status_from_value<T: Transport>(
     t: &T,
     addr: &DeviceAddr,
     value: &Value,
@@ -44,7 +44,7 @@ pub fn status_from_value<T: Transport>(
     // Always resolve the device's configured relay labels. Custom `StateText` can
     // even alias the default `ON`/`OFF` words with inverted meaning, so a
     // default-looking string cannot be trusted without the map.
-    match t.command(addr, "StateText") {
+    match t.command(addr, "StateText").await {
         Ok(stv) => {
             let map = StateTextMap::from_value(&stv);
             parse_status(&addr.host, value, Some(&map))
@@ -67,9 +67,9 @@ fn mark_relays_unknown(mut status: DeviceStatus) -> DeviceStatus {
 }
 
 /// Fetch and parse the full device status (`Status 0`).
-pub fn get_status<T: Transport>(t: &T, addr: &DeviceAddr) -> Result<DeviceStatus> {
-    let value = t.command(addr, "Status 0")?;
-    status_from_value(t, addr, &value)
+pub async fn get_status<T: Transport>(t: &T, addr: &DeviceAddr) -> Result<DeviceStatus> {
+    let value = t.command(addr, "Status 0").await?;
+    status_from_value(t, addr, &value).await
 }
 
 /// Extract the relay state from a `Power` command response (`{"POWER":"ON"}`),
@@ -91,7 +91,7 @@ fn relay_from_response(value: &Value, map: Option<&StateTextMap>) -> Option<Rela
 }
 
 /// Set a relay's power. `relay` is `None`/`Some(0)` for the primary relay.
-pub fn set_power<T: Transport>(
+pub async fn set_power<T: Transport>(
     t: &T,
     addr: &DeviceAddr,
     relay: Option<u8>,
@@ -102,10 +102,10 @@ pub fn set_power<T: Transport>(
         Some(n) => n.to_string(),
     };
     let cmnd = format!("Power{idx} {}", action.as_cmd());
-    let value = t.command(addr, &cmnd)?;
+    let value = t.command(addr, &cmnd).await?;
     // Resolve the device's configured relay labels (mirrors `status_from_value`) so a
     // custom or even inverted `StateText` normalizes the response correctly.
-    let relay = match t.command(addr, "StateText") {
+    let relay = match t.command(addr, "StateText").await {
         Ok(stv) => {
             let map = StateTextMap::from_value(&stv);
             relay_from_response(&value, Some(&map))
@@ -126,8 +126,8 @@ pub fn set_power<T: Transport>(
 /// The firmware version string. A `Status 2` response without `StatusFWR.Version`
 /// is not a valid Tasmota reply, so this errors rather than returning a missing
 /// value that would render as a plausible `n/a` with exit 0.
-pub fn firmware_version<T: Transport>(t: &T, addr: &DeviceAddr) -> Result<String> {
-    let value = t.command(addr, "Status 2")?;
+pub async fn firmware_version<T: Transport>(t: &T, addr: &DeviceAddr) -> Result<String> {
+    let value = t.command(addr, "Status 2").await?;
     value
         .get("StatusFWR")
         .and_then(|f| f.get("Version"))
@@ -143,8 +143,11 @@ pub fn firmware_version<T: Transport>(t: &T, addr: &DeviceAddr) -> Result<String
 
 /// Fetch MQTT config/health from `Status 6` (`StatusMQT`). More reliable than
 /// relying on `Status 0` to include the MQTT block. The connected flag stays `None`.
-pub fn mqtt_info<T: Transport>(t: &T, addr: &DeviceAddr) -> Result<Option<crate::model::MqttInfo>> {
-    let value = t.command(addr, "Status 6")?;
+pub async fn mqtt_info<T: Transport>(
+    t: &T,
+    addr: &DeviceAddr,
+) -> Result<Option<crate::model::MqttInfo>> {
+    let value = t.command(addr, "Status 6").await?;
     Ok(crate::parse::mqtt_from_status(&value))
 }
 
@@ -153,15 +156,15 @@ pub fn mqtt_info<T: Transport>(t: &T, addr: &DeviceAddr) -> Result<Option<crate:
 ///
 /// Tasmota reports OTA failures as HTTP 200 with an `Upgrade` value like
 /// `"Failed Verify Bin Header Failed"`, so a failed value is mapped to a rejection.
-pub fn firmware_update<T: Transport>(
+pub async fn firmware_update<T: Transport>(
     t: &T,
     addr: &DeviceAddr,
     ota_url: Option<&str>,
 ) -> Result<Value> {
     if let Some(url) = ota_url {
-        t.command(addr, &format!("OtaUrl {url}"))?;
+        t.command(addr, &format!("OtaUrl {url}")).await?;
     }
-    let response = t.command(addr, "Upgrade 1")?;
+    let response = t.command(addr, "Upgrade 1").await?;
     if let Some(status) = response.get("Upgrade").and_then(Value::as_str) {
         let lower = status.to_ascii_lowercase();
         if lower.contains("fail") || lower.contains("error") {
@@ -175,78 +178,81 @@ pub fn firmware_update<T: Transport>(
 }
 
 /// Download the device's binary configuration backup (`.dmp`) from `/dl`.
-pub fn backup_config<T: Transport>(t: &T, addr: &DeviceAddr) -> Result<Vec<u8>> {
-    t.download(addr, "/dl")
+pub async fn backup_config<T: Transport>(t: &T, addr: &DeviceAddr) -> Result<Vec<u8>> {
+    t.download(addr, "/dl").await
 }
 
 /// Read a single setting by issuing its command with no argument.
-pub fn config_get<T: Transport>(t: &T, addr: &DeviceAddr, setting: &str) -> Result<Value> {
-    t.command(addr, setting)
+pub async fn config_get<T: Transport>(t: &T, addr: &DeviceAddr, setting: &str) -> Result<Value> {
+    t.command(addr, setting).await
 }
 
 /// Write a setting (`<Setting> <value>`). Destructive-ish: guarded by the CLI.
-pub fn config_set<T: Transport>(
+pub async fn config_set<T: Transport>(
     t: &T,
     addr: &DeviceAddr,
     setting: &str,
     value: &str,
 ) -> Result<Value> {
-    t.command(addr, &format!("{setting} {value}"))
+    t.command(addr, &format!("{setting} {value}")).await
 }
 
 /// Send an arbitrary console command and return the raw JSON response.
-pub fn console<T: Transport>(t: &T, addr: &DeviceAddr, command: &str) -> Result<Value> {
-    t.command(addr, command)
+pub async fn console<T: Transport>(t: &T, addr: &DeviceAddr, command: &str) -> Result<Value> {
+    t.command(addr, command).await
 }
 
 /// Read the current GPIO template.
-pub fn template_get<T: Transport>(t: &T, addr: &DeviceAddr) -> Result<Value> {
-    t.command(addr, "Template")
+pub async fn template_get<T: Transport>(t: &T, addr: &DeviceAddr) -> Result<Value> {
+    t.command(addr, "Template").await
 }
 
 /// Apply a GPIO template and activate it. Destructive: guarded by the CLI.
-pub fn template_apply<T: Transport>(
+pub async fn template_apply<T: Transport>(
     t: &T,
     addr: &DeviceAddr,
     template_json: &str,
 ) -> Result<Value> {
-    t.command(addr, &format!("Template {template_json}"))?;
-    t.command(addr, "Module 0")
+    t.command(addr, &format!("Template {template_json}"))
+        .await?;
+    t.command(addr, "Module 0").await
 }
 
 /// Restore a binary config backup by uploading it to the device's restore
 /// endpoint. Destructive, and the endpoint is unverified: the CLI must confirm and
 /// warn before calling this.
-pub fn restore_config<T: Transport>(t: &T, addr: &DeviceAddr, data: &[u8]) -> Result<Value> {
-    t.upload(addr, "/u2", "u2", "config.dmp", data)
+pub async fn restore_config<T: Transport>(t: &T, addr: &DeviceAddr, data: &[u8]) -> Result<Value> {
+    t.upload(addr, "/u2", "u2", "config.dmp", data).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::Result as CoreResult;
+    use async_trait::async_trait;
     use serde_json::json;
-    use std::cell::RefCell;
+    use std::sync::Mutex;
 
     /// A scripted transport: returns queued responses and records commands.
     struct FakeTransport {
-        responses: RefCell<Vec<Value>>,
-        commands: RefCell<Vec<String>>,
+        responses: Mutex<Vec<Value>>,
+        commands: Mutex<Vec<String>>,
     }
 
     impl FakeTransport {
         fn new(responses: Vec<Value>) -> Self {
             FakeTransport {
-                responses: RefCell::new(responses),
-                commands: RefCell::new(Vec::new()),
+                responses: Mutex::new(responses),
+                commands: Mutex::new(Vec::new()),
             }
         }
     }
 
+    #[async_trait]
     impl Transport for FakeTransport {
-        fn command(&self, _addr: &DeviceAddr, cmnd: &str) -> CoreResult<Value> {
-            self.commands.borrow_mut().push(cmnd.to_string());
-            let mut r = self.responses.borrow_mut();
+        async fn command(&self, _addr: &DeviceAddr, cmnd: &str) -> CoreResult<Value> {
+            self.commands.lock().unwrap().push(cmnd.to_string());
+            let mut r = self.responses.lock().unwrap();
             if r.is_empty() {
                 // Simulates a device that does not answer a follow-up (e.g. StateText).
                 return Err(crate::error::Error::Network {
@@ -255,10 +261,10 @@ mod tests {
             }
             Ok(r.remove(0))
         }
-        fn download(&self, _addr: &DeviceAddr, _path: &str) -> CoreResult<Vec<u8>> {
+        async fn download(&self, _addr: &DeviceAddr, _path: &str) -> CoreResult<Vec<u8>> {
             Ok(b"dmp".to_vec())
         }
-        fn upload(
+        async fn upload(
             &self,
             _addr: &DeviceAddr,
             _path: &str,
@@ -270,125 +276,139 @@ mod tests {
         }
     }
 
-    #[test]
-    fn set_power_toggle_reports_new_state() {
+    #[tokio::test]
+    async fn set_power_toggle_reports_new_state() {
         let t = FakeTransport::new(vec![
             json!({"POWER": "ON"}),
             json!({"StateText1": "OFF", "StateText2": "ON"}),
         ]);
         let addr = DeviceAddr::new("192.0.2.30");
-        let relay = set_power(&t, &addr, None, PowerAction::Toggle).unwrap();
+        let relay = set_power(&t, &addr, None, PowerAction::Toggle)
+            .await
+            .unwrap();
         assert_eq!(relay.index, 0);
         assert_eq!(relay.state, crate::model::RelayState::On);
-        assert_eq!(t.commands.borrow()[0], "Power TOGGLE");
+        assert_eq!(t.commands.lock().unwrap()[0], "Power TOGGLE");
     }
 
-    #[test]
-    fn set_power_response_respects_inverted_statetext() {
+    #[tokio::test]
+    async fn set_power_response_respects_inverted_statetext() {
         // Response "ON" but StateText1(off)="ON": the relay is actually off.
         let t = FakeTransport::new(vec![
             json!({"POWER": "ON"}),
             json!({"StateText1": "ON", "StateText2": "OFF"}),
         ]);
         let addr = DeviceAddr::new("192.0.2.37");
-        let relay = set_power(&t, &addr, None, PowerAction::Off).unwrap();
+        let relay = set_power(&t, &addr, None, PowerAction::Off).await.unwrap();
         assert_eq!(relay.state, crate::model::RelayState::Off);
     }
 
-    #[test]
-    fn set_power_resolves_custom_statetext_in_response() {
+    #[tokio::test]
+    async fn set_power_resolves_custom_statetext_in_response() {
         // Response uses a custom label; StateText is fetched to normalize it.
         let t = FakeTransport::new(vec![
             json!({"POWER": "Open"}),
             json!({"StateText1": "Closed", "StateText2": "Open"}),
         ]);
         let addr = DeviceAddr::new("192.0.2.36");
-        let relay = set_power(&t, &addr, None, PowerAction::On).unwrap();
+        let relay = set_power(&t, &addr, None, PowerAction::On).await.unwrap();
         assert_eq!(relay.state, crate::model::RelayState::On);
-        let cmds = t.commands.borrow();
+        let cmds = t.commands.lock().unwrap();
         assert_eq!(cmds[0], "Power ON");
         assert_eq!(cmds[1], "StateText");
     }
 
-    #[test]
-    fn set_power_indexed_relay_builds_powern() {
+    #[tokio::test]
+    async fn set_power_indexed_relay_builds_powern() {
         let t = FakeTransport::new(vec![
             json!({"POWER2": "OFF"}),
             json!({"StateText1": "OFF", "StateText2": "ON"}),
         ]);
         let addr = DeviceAddr::new("192.0.2.31");
-        let relay = set_power(&t, &addr, Some(2), PowerAction::Off).unwrap();
+        let relay = set_power(&t, &addr, Some(2), PowerAction::Off)
+            .await
+            .unwrap();
         assert_eq!(relay.index, 2);
         assert_eq!(relay.state, crate::model::RelayState::Off);
-        assert_eq!(t.commands.borrow()[0], "Power2 OFF");
+        assert_eq!(t.commands.lock().unwrap()[0], "Power2 OFF");
     }
 
-    #[test]
-    fn firmware_update_sets_url_then_upgrades() {
+    #[tokio::test]
+    async fn firmware_update_sets_url_then_upgrades() {
         let t = FakeTransport::new(vec![
             json!({"OtaUrl": "http://x"}),
             json!({"Upgrade": "..."}),
         ]);
         let addr = DeviceAddr::new("192.0.2.32");
-        firmware_update(&t, &addr, Some("http://x/f.bin")).unwrap();
-        let cmds = t.commands.borrow();
+        firmware_update(&t, &addr, Some("http://x/f.bin"))
+            .await
+            .unwrap();
+        let cmds = t.commands.lock().unwrap();
         assert_eq!(cmds[0], "OtaUrl http://x/f.bin");
         assert_eq!(cmds[1], "Upgrade 1");
     }
 
-    #[test]
-    fn firmware_update_rejects_failed_ota() {
+    #[tokio::test]
+    async fn firmware_update_rejects_failed_ota() {
         // Tasmota returns HTTP 200 with a Failed Upgrade value; must not be success.
         let t = FakeTransport::new(vec![
             json!({"OtaUrl": "http://x"}),
             json!({"Upgrade": "Failed Verify Bin Header Failed"}),
         ]);
         let addr = DeviceAddr::new("192.0.2.43");
-        let err = firmware_update(&t, &addr, Some("http://x/f.bin")).unwrap_err();
+        let err = firmware_update(&t, &addr, Some("http://x/f.bin"))
+            .await
+            .unwrap_err();
         assert_eq!(err.kind(), "command_rejected");
     }
 
-    #[test]
-    fn firmware_version_requires_statusfwr() {
+    #[tokio::test]
+    async fn firmware_version_requires_statusfwr() {
         let ok = FakeTransport::new(vec![json!({"StatusFWR": {"Version": "14.2.0"}})]);
         assert_eq!(
-            firmware_version(&ok, &DeviceAddr::new("192.0.2.41")).unwrap(),
+            firmware_version(&ok, &DeviceAddr::new("192.0.2.41"))
+                .await
+                .unwrap(),
             "14.2.0"
         );
         // A non-Tasmota 200 body must error, not return a plausible n/a.
         let bad = FakeTransport::new(vec![json!({"foo": "bar"})]);
-        assert!(firmware_version(&bad, &DeviceAddr::new("192.0.2.42")).is_err());
+        assert!(
+            firmware_version(&bad, &DeviceAddr::new("192.0.2.42"))
+                .await
+                .is_err()
+        );
     }
 
-    #[test]
-    fn mqtt_info_parses_status6() {
+    #[tokio::test]
+    async fn mqtt_info_parses_status6() {
         let t = FakeTransport::new(vec![json!({
             "StatusMQT": {"MqttHost": "192.0.2.1", "MqttPort": 1883, "MqttCount": 2}
         })]);
         let addr = DeviceAddr::new("192.0.2.40");
-        let m = mqtt_info(&t, &addr).unwrap().unwrap();
+        let m = mqtt_info(&t, &addr).await.unwrap().unwrap();
         assert_eq!(m.host.as_deref(), Some("192.0.2.1"));
         assert_eq!(m.port, Some(1883));
         assert_eq!(m.connected, None);
-        assert_eq!(t.commands.borrow()[0], "Status 6");
+        assert_eq!(t.commands.lock().unwrap()[0], "Status 6");
     }
 
-    #[test]
-    fn get_status_applies_statetext_for_relay_device() {
+    #[tokio::test]
+    async fn get_status_applies_statetext_for_relay_device() {
         let t = FakeTransport::new(vec![
             json!({"StatusFWR": {"Version": "14.2.0"}, "StatusSTS": {"POWER": "ON"}}),
             json!({"StateText1": "OFF", "StateText2": "ON"}),
         ]);
         let addr = DeviceAddr::new("192.0.2.33");
-        let status = get_status(&t, &addr).unwrap();
+        let status = get_status(&t, &addr).await.unwrap();
         assert_eq!(status.relays[0].state, crate::model::RelayState::On);
-        let cmds = t.commands.borrow();
+        let cmds = t.commands.lock().unwrap();
         assert_eq!(cmds[0], "Status 0");
         assert_eq!(cmds[1], "StateText");
     }
 
-    #[test]
-    fn status_marks_relays_unknown_when_statetext_unavailable() {
+    #[tokio::test]
+    async fn status_marks_relays_unknown_when_statetext_unavailable() {
         // Only Status 0 is answered; the StateText follow-up errors, so the relay
         // must be Unknown (raw preserved), never a guessed on/off.
         let t = FakeTransport::new(vec![json!({
@@ -396,7 +416,7 @@ mod tests {
             "StatusSTS": {"POWER": "ON"}
         })]);
         let addr = DeviceAddr::new("192.0.2.50");
-        let s = get_status(&t, &addr).unwrap();
+        let s = get_status(&t, &addr).await.unwrap();
         assert!(matches!(
             s.relays[0].state,
             crate::model::RelayState::Unknown(_)
@@ -404,21 +424,22 @@ mod tests {
         assert_eq!(s.relays[0].raw, "ON");
     }
 
-    #[test]
-    fn set_power_marks_unknown_when_statetext_unavailable() {
+    #[tokio::test]
+    async fn set_power_marks_unknown_when_statetext_unavailable() {
         let t = FakeTransport::new(vec![json!({"POWER": "ON"})]);
         let addr = DeviceAddr::new("192.0.2.51");
-        let relay = set_power(&t, &addr, None, PowerAction::On).unwrap();
+        let relay = set_power(&t, &addr, None, PowerAction::On).await.unwrap();
         assert!(matches!(relay.state, crate::model::RelayState::Unknown(_)));
     }
 
-    #[test]
-    fn status_propagates_statetext_command_rejection() {
+    #[tokio::test]
+    async fn status_propagates_statetext_command_rejection() {
         // A StateText that is command-rejected (not a network no-answer) must fail,
         // not be swallowed into a success with Unknown relays.
         struct RejectStateText;
+        #[async_trait]
         impl Transport for RejectStateText {
-            fn command(&self, _addr: &DeviceAddr, cmnd: &str) -> CoreResult<Value> {
+            async fn command(&self, _addr: &DeviceAddr, cmnd: &str) -> CoreResult<Value> {
                 if cmnd == "StateText" {
                     Err(crate::error::Error::CommandRejected {
                         command: "StateText".into(),
@@ -428,10 +449,10 @@ mod tests {
                     Ok(json!({"StatusFWR": {"Version": "14.2.0"}, "StatusSTS": {"POWER": "ON"}}))
                 }
             }
-            fn download(&self, _addr: &DeviceAddr, _path: &str) -> CoreResult<Vec<u8>> {
+            async fn download(&self, _addr: &DeviceAddr, _path: &str) -> CoreResult<Vec<u8>> {
                 Ok(Vec::new())
             }
-            fn upload(
+            async fn upload(
                 &self,
                 _addr: &DeviceAddr,
                 _path: &str,
@@ -442,33 +463,35 @@ mod tests {
                 Ok(Value::Null)
             }
         }
-        let err = get_status(&RejectStateText, &DeviceAddr::new("192.0.2.52")).unwrap_err();
+        let err = get_status(&RejectStateText, &DeviceAddr::new("192.0.2.52"))
+            .await
+            .unwrap_err();
         assert_eq!(err.kind(), "command_rejected");
     }
 
-    #[test]
-    fn inverted_statetext_flips_default_looking_labels() {
+    #[tokio::test]
+    async fn inverted_statetext_flips_default_looking_labels() {
         // A device that inverts the defaults: StateText1 (off) = "ON".
         let t = FakeTransport::new(vec![
             json!({"StatusFWR": {"Version": "14.2.0"}, "StatusSTS": {"POWER": "ON"}}),
             json!({"StateText1": "ON", "StateText2": "OFF"}),
         ]);
         let addr = DeviceAddr::new("192.0.2.34");
-        let status = get_status(&t, &addr).unwrap();
+        let status = get_status(&t, &addr).await.unwrap();
         // POWER="ON" but the device says StateText1(off)="ON": it is actually off.
         assert_eq!(status.relays[0].state, crate::model::RelayState::Off);
     }
 
-    #[test]
-    fn sensor_only_device_skips_statetext() {
+    #[tokio::test]
+    async fn sensor_only_device_skips_statetext() {
         // No relays in StatusSTS: only one request, no StateText fetch.
         let t = FakeTransport::new(vec![json!({
             "StatusFWR": {"Version": "14.2.0"},
             "StatusSTS": {"Uptime": "1T00:00:00"}
         })]);
         let addr = DeviceAddr::new("192.0.2.35");
-        let status = get_status(&t, &addr).unwrap();
+        let status = get_status(&t, &addr).await.unwrap();
         assert!(status.relays.is_empty());
-        assert_eq!(t.commands.borrow().len(), 1);
+        assert_eq!(t.commands.lock().unwrap().len(), 1);
     }
 }

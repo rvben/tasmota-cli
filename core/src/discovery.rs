@@ -5,8 +5,8 @@
 //! `Status 0` response carries a firmware version (see [`crate::parse`]).
 
 use std::net::{Ipv4Addr, UdpSocket};
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicUsize, Ordering};
+
+use futures::StreamExt;
 
 use crate::error::{Error, Result};
 use crate::model::DeviceStatus;
@@ -87,43 +87,34 @@ pub fn detect_local_cidr() -> Option<String> {
 ///
 /// `concurrency` caps the number of in-flight probes. Unreachable hosts are
 /// silently skipped (a scan expects most addresses to be empty).
-pub fn scan<T: Transport + Sync>(
+pub async fn scan<T: Transport + Sync>(
     transport: &T,
     hosts: &[String],
     concurrency: usize,
     credentials: Option<&Credentials>,
 ) -> Vec<Discovered> {
-    let next = AtomicUsize::new(0);
-    let found: Mutex<Vec<Discovered>> = Mutex::new(Vec::new());
-    let workers = concurrency.max(1).min(hosts.len().max(1));
+    let mut result: Vec<Discovered> = futures::stream::iter(hosts.iter())
+        .map(|host| async move {
+            let addr = DeviceAddr::new(host.clone()).with_credentials(credentials.cloned());
+            // A probe only needs Status 0; ignore anything that fails or does not
+            // look like Tasmota.
+            if let Ok(value) = transport.command(&addr, "Status 0").await
+                && looks_like_tasmota(&value)
+                && let Ok(status) = ops::status_from_value(transport, &addr, &value).await
+            {
+                Some(Discovered {
+                    host: host.clone(),
+                    status,
+                })
+            } else {
+                None
+            }
+        })
+        .buffer_unordered(concurrency.max(1))
+        .filter_map(futures::future::ready)
+        .collect()
+        .await;
 
-    std::thread::scope(|scope| {
-        for _ in 0..workers {
-            scope.spawn(|| {
-                loop {
-                    let idx = next.fetch_add(1, Ordering::Relaxed);
-                    if idx >= hosts.len() {
-                        break;
-                    }
-                    let host = &hosts[idx];
-                    let addr = DeviceAddr::new(host.clone()).with_credentials(credentials.cloned());
-                    // A probe only needs Status 0; ignore anything that fails or
-                    // does not look like Tasmota.
-                    if let Ok(value) = transport.command(&addr, "Status 0")
-                        && looks_like_tasmota(&value)
-                        && let Ok(status) = ops::status_from_value(transport, &addr, &value)
-                    {
-                        found.lock().unwrap().push(Discovered {
-                            host: host.clone(),
-                            status,
-                        });
-                    }
-                }
-            });
-        }
-    });
-
-    let mut result = found.into_inner().unwrap();
     result.sort_by(|a, b| a.status.display_name().cmp(b.status.display_name()));
     result
 }

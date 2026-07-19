@@ -50,8 +50,8 @@ fn mock_statetext(server: &MockServer) {
     });
 }
 
-#[test]
-fn metering_plug_status_maps_every_field_honestly() {
+#[tokio::test]
+async fn metering_plug_status_maps_every_field_honestly() {
     let server = MockServer::start();
     mock_status(
         &server,
@@ -63,7 +63,7 @@ fn metering_plug_status_maps_every_field_honestly() {
 
     let transport = HttpTransport::default();
     let target = DeviceTarget::new(server.address().to_string());
-    let snapshot = transport.status(&target).expect("status succeeds");
+    let snapshot = transport.status(&target).await.expect("status succeeds");
 
     assert_eq!(snapshot.relays[0].state, SkRelayState::On);
     assert_eq!(snapshot.energy.as_ref().unwrap().power_w, Some(42.5));
@@ -75,15 +75,15 @@ fn metering_plug_status_maps_every_field_honestly() {
     );
 }
 
-#[test]
-fn no_energy_block_yields_none_not_zeroed_energy() {
+#[tokio::test]
+async fn no_energy_block_yields_none_not_zeroed_energy() {
     let server = MockServer::start();
     mock_status(&server, status0_body(json!({})));
     mock_statetext(&server);
 
     let transport = HttpTransport::default();
     let target = DeviceTarget::new(server.address().to_string());
-    let snapshot = transport.status(&target).expect("status succeeds");
+    let snapshot = transport.status(&target).await.expect("status succeeds");
 
     assert!(
         snapshot.energy.is_none(),
@@ -92,8 +92,8 @@ fn no_energy_block_yields_none_not_zeroed_energy() {
     assert!(!snapshot.capabilities.metering);
 }
 
-#[test]
-fn unmapped_relay_text_is_unknown_not_guessed() {
+#[tokio::test]
+async fn unmapped_relay_text_is_unknown_not_guessed() {
     let server = MockServer::start();
     mock_status(
         &server,
@@ -105,7 +105,7 @@ fn unmapped_relay_text_is_unknown_not_guessed() {
 
     let transport = HttpTransport::default();
     let target = DeviceTarget::new(server.address().to_string());
-    let snapshot = transport.status(&target).expect("status succeeds");
+    let snapshot = transport.status(&target).await.expect("status succeeds");
 
     assert_eq!(
         snapshot.relays[0].state,
@@ -114,21 +114,21 @@ fn unmapped_relay_text_is_unknown_not_guessed() {
     );
 }
 
-#[test]
-fn probe_confirms_a_tasmota_responder() {
+#[tokio::test]
+async fn probe_confirms_a_tasmota_responder() {
     let server = MockServer::start();
     mock_status(&server, status0_body(json!({})));
     mock_statetext(&server);
 
     let transport = HttpTransport::default();
     let target = DeviceTarget::new(server.address().to_string());
-    let result = transport.probe(&target).expect("probe succeeds");
+    let result = transport.probe(&target).await.expect("probe succeeds");
 
     assert!(result.is_some(), "a Tasmota responder must be confirmed");
 }
 
-#[test]
-fn probe_declines_a_non_tasmota_json_responder() {
+#[tokio::test]
+async fn probe_declines_a_non_tasmota_json_responder() {
     let server = MockServer::start();
     server.mock(|when, then| {
         when.method(GET).path("/cm").query_param("cmnd", "Status 0");
@@ -139,6 +139,7 @@ fn probe_declines_a_non_tasmota_json_responder() {
     let target = DeviceTarget::new(server.address().to_string());
     let result = transport
         .probe(&target)
+        .await
         .expect("probe must not error on a reachable non-match");
 
     assert!(
@@ -147,14 +148,15 @@ fn probe_declines_a_non_tasmota_json_responder() {
     );
 }
 
-#[test]
-fn connection_refused_is_network_error_never_a_snapshot() {
+#[tokio::test]
+async fn connection_refused_is_network_error_never_a_snapshot() {
     let transport = HttpTransport::default();
     // Port 1 is unlisted on loopback: a fast, deterministic connection refusal,
     // not a real/LAN device.
     let target = DeviceTarget::new("127.0.0.1:1");
     let err = transport
         .status(&target)
+        .await
         .expect_err("an unreachable host must error, never a successful empty snapshot");
 
     assert!(

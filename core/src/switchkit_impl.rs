@@ -150,17 +150,19 @@ fn map_err(e: crate::error::Error, host: &str) -> switchkit::Error {
     }
 }
 
+#[async_trait::async_trait]
 impl SmartDevice for HttpTransport {
     fn vendor(&self) -> Vendor {
         Vendor::Tasmota
     }
 
-    fn probe(&self, target: &DeviceTarget) -> switchkit::Result<Option<DeviceSnapshot>> {
+    async fn probe(&self, target: &DeviceTarget) -> switchkit::Result<Option<DeviceSnapshot>> {
         let addr = to_addr(target);
-        match self.command(&addr, "Status 0") {
+        match self.command(&addr, "Status 0").await {
             Ok(v) => {
                 if crate::parse::looks_like_tasmota(&v) {
                     let status = ops::status_from_value(self, &addr, &v)
+                        .await
                         .map_err(|e| map_err(e, &addr.host))?;
                     Ok(Some(snapshot_from_status(status)))
                 } else {
@@ -177,13 +179,15 @@ impl SmartDevice for HttpTransport {
         }
     }
 
-    fn status(&self, target: &DeviceTarget) -> switchkit::Result<DeviceSnapshot> {
+    async fn status(&self, target: &DeviceTarget) -> switchkit::Result<DeviceSnapshot> {
         let addr = to_addr(target);
-        let status = ops::get_status(self, &addr).map_err(|e| map_err(e, &addr.host))?;
+        let status = ops::get_status(self, &addr)
+            .await
+            .map_err(|e| map_err(e, &addr.host))?;
         Ok(snapshot_from_status(status))
     }
 
-    fn set_power(
+    async fn set_power(
         &self,
         target: &DeviceTarget,
         channel: Option<u8>,
@@ -195,18 +199,21 @@ impl SmartDevice for HttpTransport {
             SkPowerAction::Off => TmPowerAction::Off,
             SkPowerAction::Toggle => TmPowerAction::Toggle,
         };
-        let relay =
-            ops::set_power(self, &addr, channel, action).map_err(|e| map_err(e, &addr.host))?;
+        let relay = ops::set_power(self, &addr, channel, action)
+            .await
+            .map_err(|e| map_err(e, &addr.host))?;
         Ok(map_relay(relay))
     }
 
-    fn firmware_version(&self, target: &DeviceTarget) -> switchkit::Result<Option<String>> {
+    async fn firmware_version(&self, target: &DeviceTarget) -> switchkit::Result<Option<String>> {
         let addr = to_addr(target);
-        let version = ops::firmware_version(self, &addr).map_err(|e| map_err(e, &addr.host))?;
+        let version = ops::firmware_version(self, &addr)
+            .await
+            .map_err(|e| map_err(e, &addr.host))?;
         Ok(Some(version))
     }
 
-    fn firmware_update(
+    async fn firmware_update(
         &self,
         target: &DeviceTarget,
         ota_url: Option<&str>,
@@ -215,32 +222,42 @@ impl SmartDevice for HttpTransport {
         // `ops::firmware_update` returns the raw `Value` response; its OTA-failure
         // `Err` (an `Error::CommandRejected`) propagates via `?` below, the `Value`
         // itself is discarded since the trait signature reports only success/error.
-        ops::firmware_update(self, &addr, ota_url).map_err(|e| map_err(e, &addr.host))?;
+        ops::firmware_update(self, &addr, ota_url)
+            .await
+            .map_err(|e| map_err(e, &addr.host))?;
         Ok(())
     }
 
-    fn config_get(&self, target: &DeviceTarget, setting: &str) -> switchkit::Result<Value> {
+    async fn config_get(&self, target: &DeviceTarget, setting: &str) -> switchkit::Result<Value> {
         let addr = to_addr(target);
-        ops::config_get(self, &addr, setting).map_err(|e| map_err(e, &addr.host))
+        ops::config_get(self, &addr, setting)
+            .await
+            .map_err(|e| map_err(e, &addr.host))
     }
 
-    fn config_set(
+    async fn config_set(
         &self,
         target: &DeviceTarget,
         setting: &str,
         value: &str,
     ) -> switchkit::Result<Value> {
         let addr = to_addr(target);
-        ops::config_set(self, &addr, setting, value).map_err(|e| map_err(e, &addr.host))
+        ops::config_set(self, &addr, setting, value)
+            .await
+            .map_err(|e| map_err(e, &addr.host))
     }
 
-    fn backup(&self, target: &DeviceTarget) -> switchkit::Result<Vec<u8>> {
+    async fn backup(&self, target: &DeviceTarget) -> switchkit::Result<Vec<u8>> {
         let addr = to_addr(target);
-        ops::backup_config(self, &addr).map_err(|e| map_err(e, &addr.host))
+        ops::backup_config(self, &addr)
+            .await
+            .map_err(|e| map_err(e, &addr.host))
     }
 
-    fn console(&self, target: &DeviceTarget, command: &str) -> switchkit::Result<Value> {
+    async fn console(&self, target: &DeviceTarget, command: &str) -> switchkit::Result<Value> {
         let addr = to_addr(target);
-        ops::console(self, &addr, command).map_err(|e| map_err(e, &addr.host))
+        ops::console(self, &addr, command)
+            .await
+            .map_err(|e| map_err(e, &addr.host))
     }
 }
