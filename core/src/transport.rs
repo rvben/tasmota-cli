@@ -134,6 +134,9 @@ fn command_url(addr: &DeviceAddr, cmnd: &str) -> String {
 ///
 /// Replaces the value following a case-insensitive `user=` or `password=` with
 /// `***`, stopping at the next `&`, whitespace, or `:` delimiter, or end of string.
+/// The key must sit at a query-parameter boundary - immediately preceded by `?` or
+/// `&` - so a substring like `enduser=alice` is left untouched; this crate only ever
+/// emits credentials as `?user=...` (first param) or `&user=...`/`&password=...`.
 /// Manual scan, not a regex: no dependency, and the delimiter set is small and fixed.
 fn redact_credentials(s: &str) -> String {
     const KEYS: [&[u8]; 2] = [b"user=", b"password="];
@@ -141,9 +144,15 @@ fn redact_credentials(s: &str) -> String {
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
-        let matched = KEYS.iter().find(|key| {
-            bytes[i..].len() >= key.len() && bytes[i..i + key.len()].eq_ignore_ascii_case(key)
-        });
+        let at_param_boundary = i > 0 && (bytes[i - 1] == b'?' || bytes[i - 1] == b'&');
+        let matched = at_param_boundary
+            .then(|| {
+                KEYS.iter().find(|key| {
+                    bytes[i..].len() >= key.len()
+                        && bytes[i..i + key.len()].eq_ignore_ascii_case(key)
+                })
+            })
+            .flatten();
         if let Some(key) = matched {
             let key_len = key.len();
             out.extend_from_slice(&bytes[i..i + key_len]);
@@ -397,14 +406,14 @@ mod tests {
 
     #[test]
     fn redact_credentials_password_at_end_of_string() {
-        let redacted = redact_credentials("some error: password=SECRET");
+        let redacted = redact_credentials("some error: &password=SECRET");
         assert!(!redacted.contains("SECRET"));
         assert!(redacted.contains("password=***"));
     }
 
     #[test]
     fn redact_credentials_case_insensitive_key() {
-        let redacted = redact_credentials("oops Password=TopSecret&more");
+        let redacted = redact_credentials("oops ?Password=TopSecret&more");
         assert!(!redacted.contains("TopSecret"));
         assert!(redacted.contains("Password=***"));
         assert!(redacted.contains("&more"));
@@ -413,6 +422,25 @@ mod tests {
     #[test]
     fn redact_credentials_leaves_unrelated_text_untouched() {
         assert_eq!(redact_credentials("no secrets here"), "no secrets here");
+    }
+
+    /// A substring match on `user=` (e.g. inside `enduser=`) is not a credential:
+    /// the key must sit at a query-parameter boundary (`?`/`&`). This is the
+    /// over-redaction bug the boundary anchor fixes; it fails under a plain
+    /// substring scan.
+    #[test]
+    fn redact_credentials_does_not_match_key_substring() {
+        let input = "request failed: enduser=alice is invalid";
+        assert_eq!(redact_credentials(input), input);
+    }
+
+    #[test]
+    fn redact_credentials_matches_first_param_after_question_mark() {
+        let redacted = redact_credentials("download?user=admin&password=x");
+        assert!(!redacted.contains("=admin"));
+        assert!(!redacted.contains("=x"));
+        assert!(redacted.contains("?user=***"));
+        assert!(redacted.contains("&password=***"));
     }
 
     /// End-to-end proof the real leak is closed: connect to a closed local port
