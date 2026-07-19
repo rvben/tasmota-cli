@@ -253,7 +253,8 @@ fn build_ctx(g: &GlobalArgs) -> Ctx {
     }
 }
 
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
     // Restore default SIGPIPE handling so piping into `head`/`less` exits quietly
     // instead of panicking on a broken pipe (Rust ignores SIGPIPE by default).
     #[cfg(unix)]
@@ -289,7 +290,7 @@ fn main() -> ExitCode {
         all: cli.global.all,
     };
 
-    match dispatch(&cli.command, &ctx, &sel) {
+    match dispatch(&cli.command, &ctx, &sel).await {
         Ok(output) => emit(output),
         Err(err) => {
             emit_error(&err);
@@ -298,45 +299,49 @@ fn main() -> ExitCode {
     }
 }
 
-fn dispatch(command: &Command, ctx: &Ctx, sel: &Selector) -> tasmota_core::Result<Output> {
+async fn dispatch(command: &Command, ctx: &Ctx, sel: &Selector) -> tasmota_core::Result<Output> {
     match command {
         Command::Discover { range, concurrency } => {
-            commands::discover(ctx, range.clone(), *concurrency)
+            commands::discover(ctx, range.clone(), *concurrency).await
         }
         Command::Devices => commands::devices(ctx),
-        Command::Status => commands::status(ctx, sel),
-        Command::On { relay } => commands::set_power(ctx, sel, *relay, PowerAction::On, "turn on"),
+        Command::Status => commands::status(ctx, sel).await,
+        Command::On { relay } => {
+            commands::set_power(ctx, sel, *relay, PowerAction::On, "turn on").await
+        }
         Command::Off { relay } => {
-            commands::set_power(ctx, sel, *relay, PowerAction::Off, "turn off")
+            commands::set_power(ctx, sel, *relay, PowerAction::Off, "turn off").await
         }
         Command::Toggle { relay } => {
-            commands::set_power(ctx, sel, *relay, PowerAction::Toggle, "toggle")
+            commands::set_power(ctx, sel, *relay, PowerAction::Toggle, "toggle").await
         }
         Command::Switch { state, relay } => {
-            commands::set_power(ctx, sel, *relay, (*state).into(), "switch")
+            commands::set_power(ctx, sel, *relay, (*state).into(), "switch").await
         }
-        Command::Power => commands::power(ctx, sel),
-        Command::Energy => commands::energy(ctx, sel),
-        Command::Health => commands::health(ctx, sel),
+        Command::Power => commands::power(ctx, sel).await,
+        Command::Energy => commands::energy(ctx, sel).await,
+        Command::Health => commands::health(ctx, sel).await,
         Command::Config { cmd } => match cmd {
-            ConfigCmd::Get { setting } => commands::config_get(ctx, sel, setting),
-            ConfigCmd::Set { setting, value } => commands::config_set(ctx, sel, setting, value),
+            ConfigCmd::Get { setting } => commands::config_get(ctx, sel, setting).await,
+            ConfigCmd::Set { setting, value } => {
+                commands::config_set(ctx, sel, setting, value).await
+            }
         },
-        Command::Backup { out } => commands::backup(ctx, sel, out.clone()),
+        Command::Backup { out } => commands::backup(ctx, sel, out.clone()).await,
         Command::Restore { file } => commands::restore(ctx, sel, file.clone()),
         Command::Firmware { cmd } => match cmd {
-            FirmwareCmd::Check => commands::firmware_check(ctx, sel),
-            FirmwareCmd::Update { url } => commands::firmware_update(ctx, sel, url.clone()),
+            FirmwareCmd::Check => commands::firmware_check(ctx, sel).await,
+            FirmwareCmd::Update { url } => commands::firmware_update(ctx, sel, url.clone()).await,
         },
-        Command::Console { command } => commands::console(ctx, sel, command),
+        Command::Console { command } => commands::console(ctx, sel, command).await,
         Command::Template { cmd } => match cmd {
-            TemplateCmd::Get => commands::template_get(ctx, sel),
-            TemplateCmd::Apply { json } => commands::template_apply(ctx, sel, json),
+            TemplateCmd::Get => commands::template_get(ctx, sel).await,
+            TemplateCmd::Apply { json } => commands::template_apply(ctx, sel, json).await,
         },
         Command::Group { cmd } => match cmd {
             GroupCmd::List => commands::group_list(ctx),
         },
-        Command::Watch { interval } => commands::watch(ctx, sel, *interval),
+        Command::Watch { interval } => commands::watch(ctx, sel, *interval).await,
         // Handled before dispatch.
         Command::Schema | Command::Completions { .. } => unreachable!(),
     }
