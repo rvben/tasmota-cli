@@ -129,6 +129,44 @@ fn command_url(addr: &DeviceAddr, cmnd: &str) -> String {
     url
 }
 
+/// Redact credential values embedded in a string (typically a ureq transport-error
+/// message, which quotes the full request URL including `&user=...&password=...`).
+///
+/// Replaces the value following a case-insensitive `user=` or `password=` with
+/// `***`, stopping at the next `&`, whitespace, or `:` delimiter, or end of string.
+/// Manual scan, not a regex: no dependency, and the delimiter set is small and fixed.
+fn redact_credentials(s: &str) -> String {
+    const KEYS: [&[u8]; 2] = [b"user=", b"password="];
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let matched = KEYS.iter().find(|key| {
+            bytes[i..].len() >= key.len() && bytes[i..i + key.len()].eq_ignore_ascii_case(key)
+        });
+        if let Some(key) = matched {
+            let key_len = key.len();
+            out.extend_from_slice(&bytes[i..i + key_len]);
+            i += key_len;
+            let value_start = i;
+            while i < bytes.len()
+                && bytes[i] != b'&'
+                && bytes[i] != b':'
+                && !bytes[i].is_ascii_whitespace()
+            {
+                i += 1;
+            }
+            if i > value_start {
+                out.extend_from_slice(b"***");
+            }
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// A real HTTP transport backed by `ureq`.
 #[derive(Debug, Clone)]
 pub struct HttpTransport {
@@ -138,6 +176,17 @@ pub struct HttpTransport {
 impl HttpTransport {
     pub fn new(timeout: Duration) -> Self {
         HttpTransport { timeout }
+    }
+
+    /// Build a `ureq` agent with both the overall/read timeout and a short,
+    /// separately-bounded TCP connect timeout. `AgentBuilder::timeout` does not
+    /// bound the connect phase in ureq 2.x (its own default is ~30s), so scanning
+    /// unreachable hosts would otherwise hang ~30s per host.
+    fn build_agent(&self) -> ureq::Agent {
+        ureq::AgentBuilder::new()
+            .timeout(self.timeout)
+            .timeout_connect(Duration::from_secs(2))
+            .build()
     }
 }
 
@@ -150,7 +199,7 @@ impl Default for HttpTransport {
 impl Transport for HttpTransport {
     fn command(&self, addr: &DeviceAddr, cmnd: &str) -> Result<Value> {
         let url = command_url(addr, cmnd);
-        let agent = ureq::AgentBuilder::new().timeout(self.timeout).build();
+        let agent = self.build_agent();
         let body = match agent.get(&url).call() {
             Ok(resp) => resp.into_string().map_err(|e| Error::Network {
                 message: format!("reading response from {}: {e}", addr.host),
@@ -167,7 +216,7 @@ impl Transport for HttpTransport {
             }
             Err(ureq::Error::Transport(t)) => {
                 return Err(Error::Network {
-                    message: format!("{}: {t}", addr.host),
+                    message: format!("{}: {}", addr.host, redact_credentials(&t.to_string())),
                 });
             }
         };
@@ -192,7 +241,7 @@ impl Transport for HttpTransport {
                 encode_component(&c.password)
             ));
         }
-        let agent = ureq::AgentBuilder::new().timeout(self.timeout).build();
+        let agent = self.build_agent();
         match agent.get(&url).call() {
             Ok(resp) => {
                 let mut buf = Vec::new();
@@ -210,7 +259,7 @@ impl Transport for HttpTransport {
                 message: format!("{} returned HTTP {code} downloading {path}", addr.host),
             }),
             Err(ureq::Error::Transport(t)) => Err(Error::Network {
-                message: format!("{}: {t}", addr.host),
+                message: format!("{}: {}", addr.host, redact_credentials(&t.to_string())),
             }),
         }
     }
@@ -242,7 +291,7 @@ impl Transport for HttpTransport {
                 encode_component(&c.password)
             ));
         }
-        let agent = ureq::AgentBuilder::new().timeout(self.timeout).build();
+        let agent = self.build_agent();
         match agent
             .post(&url)
             .set(
@@ -262,7 +311,7 @@ impl Transport for HttpTransport {
                 message: format!("{} returned HTTP {code} uploading to {path}", addr.host),
             }),
             Err(ureq::Error::Transport(t)) => Err(Error::Network {
-                message: format!("{}: {t}", addr.host),
+                message: format!("{}: {}", addr.host, redact_credentials(&t.to_string())),
             }),
         }
     }
@@ -332,5 +381,60 @@ mod tests {
     fn ok_response_passes() {
         let v = json!({"POWER": "ON"});
         assert!(check_command_error(&v, "Power ON").is_ok());
+    }
+
+    #[test]
+    fn redact_credentials_scrubs_user_and_password() {
+        let input = "http://192.0.2.123/cm?cmnd=Status%200&user=admin&password=SUPER_SECRET_PW: Connection Failed: Connect error";
+        let redacted = redact_credentials(input);
+        assert!(!redacted.contains("SUPER_SECRET_PW"));
+        assert!(!redacted.contains("=admin"));
+        assert!(redacted.contains("192.0.2.123"));
+        assert!(redacted.contains("Connection Failed"));
+        assert!(redacted.contains("user=***"));
+        assert!(redacted.contains("password=***"));
+    }
+
+    #[test]
+    fn redact_credentials_password_at_end_of_string() {
+        let redacted = redact_credentials("some error: password=SECRET");
+        assert!(!redacted.contains("SECRET"));
+        assert!(redacted.contains("password=***"));
+    }
+
+    #[test]
+    fn redact_credentials_case_insensitive_key() {
+        let redacted = redact_credentials("oops Password=TopSecret&more");
+        assert!(!redacted.contains("TopSecret"));
+        assert!(redacted.contains("Password=***"));
+        assert!(redacted.contains("&more"));
+    }
+
+    #[test]
+    fn redact_credentials_leaves_unrelated_text_untouched() {
+        assert_eq!(redact_credentials("no secrets here"), "no secrets here");
+    }
+
+    /// End-to-end proof the real leak is closed: connect to a closed local port
+    /// with real credentials and assert the resulting error never contains the
+    /// password. 127.0.0.1 loopback is the test harness (not a real/LAN device);
+    /// port 1 is unlisted so the OS returns a fast, deterministic connection
+    /// refusal instead of a slow timeout.
+    #[test]
+    fn transport_error_does_not_leak_password_e2e() {
+        let addr = DeviceAddr::new("127.0.0.1:1").with_credentials(Some(Credentials {
+            user: "admin".into(),
+            password: "SUPER_SECRET_PW".into(),
+        }));
+        let transport = HttpTransport::default();
+        let err = transport
+            .command(&addr, "Status 0")
+            .expect_err("connecting to a closed port must fail");
+        let message = err.to_string();
+        assert!(
+            !message.contains("SUPER_SECRET_PW"),
+            "transport error leaked the password: {message}"
+        );
+        assert_eq!(err.kind(), "network");
     }
 }
