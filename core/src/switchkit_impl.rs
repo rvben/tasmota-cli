@@ -14,9 +14,25 @@ use switchkit::{
     SmartDevice, Vendor,
 };
 
-use crate::model::{DeviceStatus, RelayState as TmRelayState};
+use crate::model::{DeviceStatus, Relay as TmRelay, RelayState as TmRelayState};
 use crate::ops::{self, PowerAction as TmPowerAction};
 use crate::transport::{Credentials, DeviceAddr, HttpTransport, Transport};
+
+/// Map a Tasmota relay onto the vendor-neutral `switchkit::Relay`. The single
+/// place the on/off/unknown truth is translated, so the two call sites
+/// (`snapshot_from_status` and `set_power`) can never drift: an unmapped label
+/// stays `Unknown`, never a guessed `Off`.
+fn map_relay(relay: TmRelay) -> SkRelay {
+    SkRelay {
+        index: relay.index,
+        state: match relay.state {
+            TmRelayState::On => SkRelayState::On,
+            TmRelayState::Off => SkRelayState::Off,
+            TmRelayState::Unknown(raw) => SkRelayState::Unknown(raw),
+        },
+        raw: relay.raw,
+    }
+}
 
 /// Map a vendor-neutral target to the Tasmota-specific address, translating
 /// credentials field-for-field (never reconstructing a URL from them).
@@ -49,19 +65,7 @@ fn snapshot_from_status(status: DeviceStatus) -> DeviceSnapshot {
     let name = primary_name(&status);
     let model = status.module.map(|m| m.to_string());
 
-    let relays: Vec<SkRelay> = status
-        .relays
-        .into_iter()
-        .map(|r| SkRelay {
-            index: r.index,
-            state: match r.state {
-                TmRelayState::On => SkRelayState::On,
-                TmRelayState::Off => SkRelayState::Off,
-                TmRelayState::Unknown(raw) => SkRelayState::Unknown(raw),
-            },
-            raw: r.raw,
-        })
-        .collect();
+    let relays: Vec<SkRelay> = status.relays.into_iter().map(map_relay).collect();
 
     // `None` only when the device has no energy sensor at all; a present block
     // with individually-missing readings keeps each leaf `Option` as parsed.
@@ -193,15 +197,7 @@ impl SmartDevice for HttpTransport {
         };
         let relay =
             ops::set_power(self, &addr, channel, action).map_err(|e| map_err(e, &addr.host))?;
-        Ok(SkRelay {
-            index: relay.index,
-            state: match relay.state {
-                TmRelayState::On => SkRelayState::On,
-                TmRelayState::Off => SkRelayState::Off,
-                TmRelayState::Unknown(raw) => SkRelayState::Unknown(raw),
-            },
-            raw: relay.raw,
-        })
+        Ok(map_relay(relay))
     }
 
     fn firmware_version(&self, target: &DeviceTarget) -> switchkit::Result<Option<String>> {
