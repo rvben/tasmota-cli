@@ -90,7 +90,17 @@ enum Command {
         concurrency: usize,
     },
     /// List cached devices.
-    Devices,
+    Devices {
+        /// Maximum number of cached devices to return
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        /// Number of cached devices to skip
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        /// Comma-separated fields to include in JSON output
+        #[arg(long)]
+        fields: Option<String>,
+    },
     /// Show full device status.
     Status,
     /// Turn a relay on.
@@ -304,7 +314,11 @@ async fn dispatch(command: &Command, ctx: &Ctx, sel: &Selector) -> tasmota_core:
         Command::Discover { range, concurrency } => {
             commands::discover(ctx, range.clone(), *concurrency).await
         }
-        Command::Devices => commands::devices(ctx),
+        Command::Devices {
+            limit,
+            offset,
+            fields,
+        } => commands::devices(ctx, *limit, *offset, fields.as_deref()),
         Command::Status => commands::status(ctx, sel).await,
         Command::On { relay } => {
             commands::set_power(ctx, sel, *relay, PowerAction::On, "turn on").await

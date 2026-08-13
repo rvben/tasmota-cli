@@ -266,11 +266,30 @@ pub async fn health(ctx: &Ctx, sel: &Selector) -> Result<Output> {
     .await
 }
 
-pub fn devices(ctx: &Ctx) -> Result<Output> {
+pub fn devices(ctx: &Ctx, limit: usize, offset: usize, fields: Option<&str>) -> Result<Output> {
     let cache = DeviceCache::load(&ctx.cache_path)?;
+    let total = cache.devices.len();
+    let page: Vec<_> = cache.devices.into_iter().skip(offset).take(limit).collect();
     Ok(Output::One(match ctx.format {
-        OutputFormat::Json => serde_json::to_string_pretty(&cache.devices).expect("json"),
-        OutputFormat::Text => render::devices(&cache.devices),
+        OutputFormat::Json => {
+            let selected: Option<Vec<_>> =
+                fields.map(|value| value.split(',').map(str::trim).collect());
+            let items: Vec<serde_json::Value> = page
+                .iter()
+                .map(|device| {
+                    let mut value = serde_json::to_value(device).expect("cached device serializes");
+                    if let (Some(selected), Some(object)) = (&selected, value.as_object_mut()) {
+                        object.retain(|key, _| selected.contains(&key.as_str()));
+                    }
+                    value
+                })
+                .collect();
+            serde_json::to_string_pretty(
+                &json!({"items":items,"total":total,"limit":limit,"offset":offset}),
+            )
+            .expect("json")
+        }
+        OutputFormat::Text => render::devices(&page),
     }))
 }
 

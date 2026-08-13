@@ -1,4 +1,4 @@
-//! The clispec v0.2 contract emitted by `tasmota schema`.
+//! The clispec v0.3 contract emitted by `tasmota schema`.
 //!
 //! Conforms to <https://clispec.dev/schema/v0.2.json> (validated by
 //! `tests/conformance.rs` against the vendored copy). Keep in sync with the clap
@@ -6,11 +6,11 @@
 
 use serde_json::{Value, json};
 
-pub const CLISPEC_VERSION: &str = "0.2";
+pub const CLISPEC_VERSION: &str = "0.3";
 
 /// Build the clispec contract as a JSON value.
 pub fn contract() -> Value {
-    json!({
+    let mut schema = json!({
         "clispec": CLISPEC_VERSION,
         "name": "tasmota",
         "version": env!("CARGO_PKG_VERSION"),
@@ -51,6 +51,11 @@ pub fn contract() -> Value {
              ]},
             {"name": "devices", "mutating": false, "stability": "stable",
              "description": "List cached devices.",
+             "args": [
+                {"name":"--limit","type":"integer","default":100,"description":"Maximum number of cached devices to return."},
+                {"name":"--offset","type":"integer","default":0,"description":"Number of cached devices to skip."},
+                {"name":"--fields","type":"string","description":"Comma-separated fields to include in JSON output."}
+             ],
              "output_fields": [
                 {"name": "name", "type": "string"},
                 {"name": "host", "type": "string"},
@@ -169,7 +174,111 @@ pub fn contract() -> Value {
             {"kind": "unavailable", "exit_code": 9, "retryable": false, "description": "The requested datum is not available from the device (never coerced to 0)."},
             {"kind": "aborted", "exit_code": 2, "retryable": false, "description": "User declined a confirmation prompt."}
         ]
-    })
+    });
+    enrich_v0_3(&mut schema);
+    schema
+}
+
+fn flatten(commands: &[Value], prefix: &str, output: &mut Vec<Value>) {
+    for command in commands {
+        let Some(object) = command.as_object() else {
+            continue;
+        };
+        let local = object["name"].as_str().unwrap_or_default();
+        let name = if prefix.is_empty() {
+            local.to_string()
+        } else {
+            format!("{prefix} {local}")
+        };
+        if let Some(children) = object.get("subcommands").and_then(Value::as_array) {
+            flatten(children, &name, output);
+        } else {
+            let mut leaf = object.clone();
+            leaf.remove("subcommands");
+            leaf.insert("name".into(), json!(name));
+            output.push(Value::Object(leaf));
+        }
+    }
+}
+
+fn enrich_v0_3(schema: &mut Value) {
+    schema["output"] = json!({"tty":"text","piped":"json"});
+    let source = schema["commands"].as_array().cloned().unwrap_or_default();
+    let mut commands = Vec::new();
+    flatten(&source, "", &mut commands);
+    for command in &mut commands {
+        let Some(object) = command.as_object_mut() else {
+            continue;
+        };
+        let name = object["name"].as_str().unwrap_or_default().to_string();
+        let mutating = object["mutating"].as_bool().unwrap_or(false);
+        object.insert(
+            "effects".into(),
+            json!(if !mutating {
+                "read_only"
+            } else if matches!(name.as_str(), "toggle" | "switch" | "console") {
+                "non_idempotent"
+            } else {
+                "idempotent"
+            }),
+        );
+        if name == "completions" {
+            object.insert("output_kind".into(), json!("opaque"));
+            object.insert("media_type".into(), json!("text/plain"));
+            continue;
+        }
+        if name == "watch" {
+            object.insert("output_kind".into(), json!("stream"));
+            object.insert("stream_format".into(), json!("ndjson"));
+            continue;
+        }
+        let unbounded = name == "devices";
+        object.insert(
+            "cardinality".into(),
+            json!(if unbounded { "unbounded" } else { "bounded" }),
+        );
+        if unbounded {
+            object.insert(
+                "pagination".into(),
+                json!({"style":"offset","limit_arg":"--limit","offset_arg":"--offset"}),
+            );
+            object.insert("fields_arg".into(), json!("--fields"));
+            object.insert("example".into(), json!({"args":["devices"]}));
+        }
+        if mutating && name != "discover" {
+            object.insert("confirmation_bypass_arg".into(), json!("--yes"));
+        }
+        if name == "schema" {
+            object.insert("cardinality".into(), json!("single"));
+            object.insert(
+                "stdout_schema".into(),
+                json!({"$ref":"https://clispec.dev/schema/v0.3.json"}),
+            );
+        }
+        if let Some(fields) = object
+            .get_mut("output_fields")
+            .and_then(Value::as_array_mut)
+        {
+            for field in fields {
+                let Some(field) = field.as_object_mut() else {
+                    continue;
+                };
+                if let Some(base) = field
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .and_then(|kind| kind.strip_suffix("[]"))
+                    .map(str::to_owned)
+                {
+                    field.insert("type".into(), json!("array"));
+                    field.insert("items".into(), json!({"type":base}));
+                }
+            }
+        }
+        if !object.contains_key("output_fields") && !object.contains_key("stdout_schema") {
+            object.insert("stdout_schema".into(), json!({}));
+        }
+    }
+    schema["commands"] = Value::Array(commands);
 }
 
 /// The contract as a pretty-printed JSON string.
