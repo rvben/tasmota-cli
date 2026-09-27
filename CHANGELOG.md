@@ -4,9 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.2](https://github.com/rvben/tasmota-cli/compare/v0.2.1...v0.2.2) - 2026-09-27
 
+### Fixed
 
-
+- **deps**: update rustls to 0.23.45 for RUSTSEC-2026-0285 ([bd30c53](https://github.com/rvben/tasmota-cli/commit/bd30c53192482869cfee721a42160338b17aa7aa))
+- **ci**: install pinned Rust components ([a3bd567](https://github.com/rvben/tasmota-cli/commit/a3bd5672c2025522df3a61e8d8c30d01947674b3))
 
 ## [0.2.0](https://github.com/rvben/tasmota-cli/compare/v0.1.3...v0.2.0) - 2026-07-19
 
