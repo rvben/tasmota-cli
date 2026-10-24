@@ -12,6 +12,14 @@ envelopes. It talks directly to each device over HTTP (no MQTT broker required).
 
 ## Install
 
+### Homebrew
+
+```sh
+brew install rvben/tap/tasmota-cli
+```
+
+### Other installation methods
+
 ```sh
 cargo install tasmota-cli      # installs the `tasmota` binary
 ```
