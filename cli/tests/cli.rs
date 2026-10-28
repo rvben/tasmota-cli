@@ -206,7 +206,7 @@ fn dry_run_firmware_update_contacts_nothing() {
     ]);
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
     assert_eq!(
-        any.hits(),
+        any.calls(),
         0,
         "dry-run firmware update must not contact the device"
     );
@@ -223,7 +223,7 @@ fn dry_run_status_contacts_nothing() {
     let host = server.address().to_string();
     let out = run(&["-o", "json", "--host", &host, "--dry-run", "status"]);
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
-    assert_eq!(any.hits(), 0, "dry-run status must not contact the device");
+    assert_eq!(any.calls(), 0, "dry-run status must not contact the device");
     // Dry-run still honors --json.
     let v: Value = serde_json::from_str(&out.stdout).unwrap();
     assert_eq!(v["dry_run"], true);
@@ -250,7 +250,7 @@ fn dry_run_backup_writes_no_file() {
         out_path.to_str().unwrap(),
     ]);
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
-    assert_eq!(any.hits(), 0, "dry-run backup must not download");
+    assert_eq!(any.calls(), 0, "dry-run backup must not download");
     assert!(!out_path.exists(), "dry-run backup must not write a file");
 }
 
@@ -266,7 +266,7 @@ fn unclassified_console_command_requires_confirmation() {
     // command must NOT be sent.
     let out = run(&["--host", &host, "console", "SetOption65 1"]);
     assert_eq!(out.code, 2, "should abort; stderr: {}", out.stderr);
-    assert_eq!(any.hits(), 0, "must not send before confirmation");
+    assert_eq!(any.calls(), 0, "must not send before confirmation");
     assert_eq!(error_envelope(&out.stderr)["kind"], "aborted");
 }
 
@@ -286,7 +286,7 @@ fn config_get_rejects_command_injection() {
         "Backlog Power OFF; Reset 1",
     ]);
     assert_eq!(out.code, 3, "stderr: {}", out.stderr);
-    assert_eq!(any.hits(), 0, "must not send an injected command");
+    assert_eq!(any.calls(), 0, "must not send an injected command");
     assert_eq!(error_envelope(&out.stderr)["kind"], "usage");
 }
 
@@ -314,7 +314,7 @@ fn bulk_selection_with_single_device_still_confirms() {
         "single-device --all must still confirm; stderr: {}",
         out.stderr
     );
-    assert_eq!(any.hits(), 0, "must not send before confirmation");
+    assert_eq!(any.calls(), 0, "must not send before confirmation");
     assert_eq!(error_envelope(&out.stderr)["kind"], "aborted");
 }
 
@@ -358,6 +358,6 @@ fn destructive_console_dry_run_sends_nothing() {
     let host = server.address().to_string();
     let out = run(&["--host", &host, "--dry-run", "console", "Reset 1"]);
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
-    assert_eq!(any.hits(), 0, "dry-run must not contact the device");
+    assert_eq!(any.calls(), 0, "dry-run must not contact the device");
     assert!(out.stderr.contains("destructive"));
 }

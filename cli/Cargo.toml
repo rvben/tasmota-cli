@@ -36,4 +36,4 @@ libc = "0.2"
 
 [dev-dependencies]
 jsonschema = { version = "0.46", default-features = false }
-httpmock = "0.7"
+httpmock = "0.8.3"
